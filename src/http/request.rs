@@ -1,12 +1,12 @@
 use std::fmt;
 
-use nom::bytes::streaming::{tag, take, take_while, take_while1};
+use nom::bytes::streaming::{tag, take_while, take_while1};
 use nom::combinator::opt;
 use nom::error::{context, ContextError, ParseError};
 use nom::multi::many0;
 use nom::sequence::{preceded, terminated, tuple};
 
-use super::{get_body_size, is_chunked, retrieve_chunked_encoded_body, Header};
+use crate::http::{Header, TransferEncoding};
 use crate::utils::{ascii_string, consume_spaces, crlf, parse_version};
 
 #[derive(Debug, Eq, PartialEq)]
@@ -30,7 +30,7 @@ pub struct Request<'a> {
     headers: Vec<Header<'a>>,
 
     /// Body
-    pub body: &'a [u8],
+    pub body: TransferEncoding<'a>,
 }
 
 impl<'a> Request<'a> {
@@ -64,7 +64,6 @@ impl<'a> Request<'a> {
                 ),
             )),
         )(input)?;
-        eprintln!("Got first line");
 
         let raw_variables = if let Some(vars) = raw_variables {
             vars.split('&')
@@ -82,49 +81,20 @@ impl<'a> Request<'a> {
 
         let (rest, headers) = context("HTTP headers", many0(Header::parse))(rest)?;
         let (rest, _) = context("HTTP headers end", crlf)(rest)?;
-        if let Some(body_length) = get_body_size(&headers[..]) {
-            let (rest, body) = context("HTTP body", take(body_length))(rest)?;
-            Ok((
-                rest,
-                Self {
-                    method,
-                    raw_path,
-                    raw_variables,
-                    raw_anchor,
-                    version,
-                    headers,
-                    body,
-                },
-            ))
-        } else if is_chunked(&headers[..]) {
-            let (rest, body) = retrieve_chunked_encoded_body(rest)?;
-            Ok((
-                rest,
-                Self {
-                    method,
-                    raw_path,
-                    raw_variables,
-                    raw_anchor,
-                    version,
-                    headers,
-                    body,
-                },
-            ))
-        } else {
-            let body = &b""[..];
-            Ok((
-                rest,
-                Self {
-                    method,
-                    raw_path,
-                    raw_variables,
-                    raw_anchor,
-                    version,
-                    headers,
-                    body,
-                },
-            ))
-        }
+
+        let (rest, body) = TransferEncoding::parse(rest, &headers[..])?;
+        Ok((
+            rest,
+            Self {
+                method,
+                raw_path,
+                raw_variables,
+                raw_anchor,
+                version,
+                headers,
+                body,
+            },
+        ))
     }
 
     pub fn path(&self) -> String {
@@ -174,6 +144,8 @@ impl fmt::Display for Request<'_> {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use crate::utils::hex::Hex;
     use crate::Error;
 
@@ -182,7 +154,7 @@ mod tests {
     #[test]
     fn parse_http_request() {
         let request = b"\
-        GET /path?var1=value1&var2=&var1#anchor HTTP/1.1\r\n\
+        GET /path?var1=value1&var2=&var3#anchor HTTP/1.1\r\n\
         Host: localhost\r\n\
         Connection: Closed\r\n\
         \r\n\
@@ -211,7 +183,7 @@ mod tests {
                             value: "Closed"
                         },
                     ],
-                    body: &b""[..]
+                    body: TransferEncoding::Regular(&b""[..]),
                 }
             ))
         );

@@ -1,9 +1,12 @@
 use std::fmt;
 
-use nom::bytes::streaming::{tag, take, take_while1};
+use nom::bytes::streaming::{tag, take_while1};
 use nom::combinator::map;
 use nom::error::{context, ContextError, ParseError};
 use nom::sequence::{separated_pair, terminated, tuple};
+
+mod transfer;
+pub use transfer::TransferEncoding;
 
 mod response;
 pub use response::Response;
@@ -11,10 +14,10 @@ pub use response::Response;
 mod request;
 pub use request::Request;
 
-use crate::utils::{ascii_string, consume_spaces, crlf, parse_usize_hex};
+use crate::utils::{ascii_string, consume_spaces, crlf};
 
 /// HTTP header
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq)]
 pub struct Header<'a> {
     /// HTTP header name
     pub name: &'a str,
@@ -51,54 +54,30 @@ impl<'a> Header<'a> {
             ),
         )(input)
     }
+
+    pub fn get_value(headers: &[Header<'a>], needle: &str) -> Option<&'a str> {
+        Self::get_values(headers, needle).next()
+    }
+
+    pub fn get_values<'b>(
+        headers: &'b [Header<'a>],
+        needle: &'b str,
+    ) -> impl Iterator<Item = &'a str> + 'b
+    where
+        'a: 'b,
+    {
+        headers
+            .iter()
+            .filter_map(|h| h.name.eq_ignore_ascii_case(needle).then(|| h.value))
+    }
 }
 
 pub fn get_body_size(headers: &[Header<'_>]) -> Option<usize> {
-    headers.iter().find_map(|h| {
-        if h.name.eq_ignore_ascii_case("Content-Length") {
-            h.value.parse::<usize>().ok()
-        } else {
-            None
-        }
-    })
+    Header::get_value(headers, "Content-Length").and_then(|v| v.parse::<usize>().ok())
 }
 
-pub fn is_chunked(headers: &[Header<'_>]) -> bool {
-    headers
-        .iter()
-        .find(|h| {
-            h.name.eq_ignore_ascii_case("Transfer-Encoding")
-                && h.value.eq_ignore_ascii_case("chunked")
-        })
-        .is_some()
-}
-
-pub fn retrieve_chunked_encoded_body<'a, E>(input: &'a [u8]) -> nom::IResult<&'a [u8], &'a [u8], E>
-where
-    E: ParseError<&'a [u8]> + ContextError<&'a [u8]>,
-{
-    let input_orig = input;
-    let mut input = input;
-    loop {
-        let (rest, chunk_size) =
-            context("HTTP Chunk size", terminated(parse_usize_hex, crlf))(input)?;
-        input = rest;
-
-        let (rest, _chunk) = context(
-            "HTTP chunk data",
-            terminated(take(chunk_size), tag(&b"\r\n"[..])),
-        )(input)?;
-        input = rest;
-
-        if chunk_size == 0 {
-            break;
-        }
+impl<'a> std::cmp::PartialEq for Header<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.name.eq_ignore_ascii_case(other.name) && self.value == other.value
     }
-
-    assert!(input_orig.len() > input.len());
-    let offset = input_orig.len() - input.len();
-
-    let body = &input_orig[..offset];
-    let rest = &input_orig[offset..];
-    Ok((rest, body))
 }

@@ -1,42 +1,36 @@
 use std::fmt;
 
-use nom::bytes::streaming::{tag, take, take_until};
+use nom::bytes::streaming::{tag, take_until};
 use nom::combinator::verify;
 use nom::error::{context, ContextError, ParseError};
 use nom::multi::many1;
 use nom::sequence::{preceded, terminated, tuple};
 
-use super::{get_body_size, is_chunked, retrieve_chunked_encoded_body, Header};
+use crate::http::{Header, TransferEncoding};
 use crate::utils::{ascii_string, consume_spaces, crlf, parse_u16, parse_version};
 
 /// HTTP Response
-#[derive(Debug, Eq, PartialEq, Default)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Response<'a> {
     /// Version used by the server
-    version: (u8, u8),
+    pub version: (u8, u8),
 
     /// Response's code
-    code: u16,
+    pub code: u16,
 
     /// Message associated with code
-    message: &'a str,
+    pub message: &'a str,
 
     /// headers,
     headers: Vec<Header<'a>>,
 
     /// body
-    body: &'a [u8],
+    pub body: TransferEncoding<'a>,
 }
 
 impl<'a> Response<'a> {
-    pub fn code(&self) -> u16 {
-        self.code
-    }
     pub fn headers(&self) -> &[Header<'a>] {
         &self.headers[..]
-    }
-    pub fn body(&self) -> &[u8] {
-        self.body
     }
 
     pub fn parse<E>(input: &'a [u8]) -> nom::IResult<&'a [u8], Self, E>
@@ -63,38 +57,17 @@ impl<'a> Response<'a> {
 
         let (rest, headers) = context("HTTP headers", many1(Header::parse))(rest)?;
         let (rest, _) = context("HTTP headers end", crlf)(rest)?;
-        if let Some(body_length) = get_body_size(&headers[..]) {
-            let (rest, body) = context("HTTP body", take(body_length))(rest)?;
-            Ok((
-                rest,
-                Self {
-                    version,
-                    code,
-                    message,
-                    headers,
-                    body,
-                },
-            ))
-        } else if is_chunked(&headers[..]) {
-            let (rest, body) = retrieve_chunked_encoded_body(rest)?;
-            Ok((
-                rest,
-                Self {
-                    version,
-                    code,
-                    message,
-                    headers,
-                    body,
-                },
-            ))
-        } else {
-            context("No Content-Length or Transfer-Encoding specified", |i| {
-                Err(nom::Err::Failure(nom::error::make_error::<&[u8], E>(
-                    i,
-                    nom::error::ErrorKind::Verify,
-                )))
-            })(input)
-        }
+        let (rest, body) = TransferEncoding::parse(rest, &headers[..])?;
+        Ok((
+            rest,
+            Self {
+                version,
+                code,
+                message,
+                headers,
+                body,
+            },
+        ))
     }
 }
 
@@ -161,7 +134,7 @@ mod tests {
                             value: "Closed"
                         }
                     ],
-                    body: &b"hello world!"[..]
+                    body: TransferEncoding::Regular(&b"hello world!"[..]),
                 }
             )),
             "Bad response: {:#?}",
