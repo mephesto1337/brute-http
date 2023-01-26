@@ -6,7 +6,7 @@ use nom::error::{context, ContextError, ParseError};
 use nom::multi::many0;
 use nom::sequence::{preceded, terminated, tuple};
 
-use crate::http::{Header, TransferEncoding};
+use crate::http::{Body, Header};
 use crate::utils::{ascii_string, consume_spaces, crlf, parse_version};
 
 #[derive(Debug, Eq, PartialEq)]
@@ -30,7 +30,7 @@ pub struct Request<'a> {
     headers: Vec<Header<'a>>,
 
     /// Body
-    pub body: TransferEncoding<'a>,
+    pub body: Body,
 }
 
 impl<'a> Request<'a> {
@@ -82,7 +82,7 @@ impl<'a> Request<'a> {
         let (rest, headers) = context("HTTP headers", many0(Header::parse))(rest)?;
         let (rest, _) = context("HTTP headers end", crlf)(rest)?;
 
-        let (rest, body) = TransferEncoding::parse(rest, &headers[..])?;
+        let (rest, body) = Body::parse(rest, &headers[..])?;
         Ok((
             rest,
             Self {
@@ -146,6 +146,7 @@ impl fmt::Display for Request<'_> {
 mod tests {
     use pretty_assertions::assert_eq;
 
+    use crate::http::TransferEncodingKind;
     use crate::utils::hex::Hex;
     use crate::Error;
 
@@ -183,7 +184,10 @@ mod tests {
                             value: "Closed"
                         },
                     ],
-                    body: TransferEncoding::Regular(&b""[..]),
+                    body: Body {
+                        kind: TransferEncodingKind::Regular,
+                        content: Vec::new(),
+                    }
                 }
             ))
         );

@@ -6,7 +6,7 @@ use nom::error::{context, ContextError, ParseError};
 use nom::multi::many1;
 use nom::sequence::{preceded, terminated, tuple};
 
-use crate::http::{Header, TransferEncoding};
+use crate::http::{Body, Header};
 use crate::utils::{ascii_string, consume_spaces, crlf, parse_u16, parse_version};
 
 /// HTTP Response
@@ -25,7 +25,7 @@ pub struct Response<'a> {
     headers: Vec<Header<'a>>,
 
     /// body
-    pub body: TransferEncoding<'a>,
+    pub body: Body,
 }
 
 impl<'a> Response<'a> {
@@ -57,7 +57,7 @@ impl<'a> Response<'a> {
 
         let (rest, headers) = context("HTTP headers", many1(Header::parse))(rest)?;
         let (rest, _) = context("HTTP headers end", crlf)(rest)?;
-        let (rest, body) = TransferEncoding::parse(rest, &headers[..])?;
+        let (rest, body) = Body::parse(rest, &headers[..])?;
         Ok((
             rest,
             Self {
@@ -88,6 +88,7 @@ impl fmt::Display for Response<'_> {
 
 #[cfg(test)]
 mod tests {
+    use crate::http::TransferEncodingKind;
     use crate::utils::hex::Hex;
     use crate::Error;
 
@@ -134,7 +135,10 @@ mod tests {
                             value: "Closed"
                         }
                     ],
-                    body: TransferEncoding::Regular(&b"hello world!"[..]),
+                    body: Body {
+                        kind: TransferEncodingKind::Regular,
+                        content: b"hello world!"[..].to_vec()
+                    }
                 }
             )),
             "Bad response: {:#?}",

@@ -19,23 +19,22 @@ pub use error::{Error, Result};
 #[clap(author, version, about, long_about = None)]
 struct Options {
     /// Input file for HTTP request
-    #[clap(short, long)]
+    #[arg(short, long)]
     request: PathBuf,
 
     /// Remote destination HOST:PORT
-    #[clap(parse(try_from_str))]
     target: String,
 
     /// Number of threads to use
-    #[clap(short, long, parse(try_from_str))]
+    #[arg(short, long)]
     threads: Option<usize>,
 
     /// Only test request and dumps response
-    #[clap(long)]
+    #[arg(long)]
     test: bool,
 
     /// Use SSL
-    #[clap(short, long)]
+    #[arg(short, long)]
     use_tls: bool,
 }
 
@@ -56,7 +55,7 @@ fn format_bandwidth(bytes: u64, seconds: u64) -> String {
             format!("{:>8.3} Gbps", bandwitdh / GIGA)
         }
     } else {
-        format!("u64 overflow \\o/ !")
+        "u64 overflow \\o/ !".to_owned()
     }
 }
 

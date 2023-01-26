@@ -10,14 +10,6 @@ impl<'a> Hex<'a> {
     pub fn as_slice(&'a self) -> &'a [u8] {
         self.as_ref()
     }
-
-    pub fn to_owned(&mut self) -> &mut Self {
-        if let Self::Ref(r) = self {
-            let buf = r.to_vec();
-            *self = Self::Owned(buf);
-        }
-        self
-    }
 }
 
 impl<'a> From<&'a [u8]> for Hex<'a> {
@@ -37,7 +29,7 @@ impl Deref for Hex<'_> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::Ref(ref h) => h,
+            Self::Ref(h) => h,
             Self::Owned(o) => &o[..],
         }
     }

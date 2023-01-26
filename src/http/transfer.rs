@@ -1,16 +1,16 @@
-use std::fmt;
+use std::io::{Read, Write};
 
 use nom::bytes::streaming::{tag, take};
 use nom::error::{context, ContextError, ParseError};
 use nom::sequence::terminated;
 
+use flate2::read::{GzDecoder, ZlibDecoder};
+
 use crate::http::{get_body_size, Header};
-use crate::utils::hex::Hex;
 use crate::utils::{crlf, parse_usize_hex};
 
 /// Transfer Encoding for HTTP bodies
-#[derive(Eq)]
-pub enum TransferEncoding<'a> {
+enum TransferEncodingInner<'a> {
     /// Just a "normal" body
     Regular(&'a [u8]),
 
@@ -28,31 +28,7 @@ pub enum TransferEncoding<'a> {
     Gzip(&'a [u8]),
 }
 
-pub struct TransferEncodingIter<'a, 'b> {
-    index: usize,
-    te: &'b TransferEncoding<'a>,
-}
-
-impl<'a, 'b> Iterator for TransferEncodingIter<'a, 'b>
-where
-    'b: 'a,
-{
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let chunk = match self.te {
-            TransferEncoding::Regular(body) => std::iter::once(body).skip(self.index).next(),
-            TransferEncoding::Chunked(chunks) => chunks.get(self.index),
-            TransferEncoding::Compress(body) => std::iter::once(body).skip(self.index).next(),
-            TransferEncoding::Deflate(body) => std::iter::once(body).skip(self.index).next(),
-            TransferEncoding::Gzip(body) => std::iter::once(body).skip(self.index).next(),
-        };
-        self.index += 1;
-        chunk.map(|&x| x)
-    }
-}
-
-impl<'a> TransferEncoding<'a> {
+impl<'a> TransferEncodingInner<'a> {
     fn parse_chunked<E>(input: &'a [u8]) -> nom::IResult<&'a [u8], Vec<&'a [u8]>, E>
     where
         E: ParseError<&'a [u8]> + ContextError<&'a [u8]>,
@@ -132,70 +108,103 @@ impl<'a> TransferEncoding<'a> {
             }
         }
     }
+}
 
-    pub fn iter<'b>(&'b self) -> TransferEncodingIter<'a, 'b> {
-        TransferEncodingIter { index: 0, te: self }
-    }
+#[derive(Debug, PartialEq, Eq)]
+pub enum TransferEncodingKind {
+    /// Just a "normal" body
+    Regular,
 
-    fn is_equal(&'a self, other: &Self) -> Option<()> {
-        let mut chunks_self = self.iter();
-        let mut chunks_other = other.iter();
+    /// Data is sent in a series of chunks
+    Chunked,
 
-        let (mut chunk_self, mut chunk_other) = match (chunks_self.next(), chunks_other.next()) {
-            (Some(x), Some(y)) => (x, y),
-            (None, None) => return Some(()),
-            _ => return None,
+    /// A format using the Lempel-Ziv-Welch (LZW) algorithm.
+    Compress,
+
+    /// Using the zlib structure (defined in RFC 1950), with the deflate compression algorithm
+    /// (defined in RFC 1951).
+    Deflate,
+
+    /// A format using the Lempel-Ziv coding (LZ77), with a 32-bit CRC.
+    Gzip,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct Body {
+    /// The kind being used
+    pub kind: TransferEncodingKind,
+
+    /// The decoded content
+    pub content: Vec<u8>,
+}
+
+impl Body {
+    pub fn parse<'a, E>(input: &'a [u8], headers: &[Header<'_>]) -> nom::IResult<&'a [u8], Self, E>
+    where
+        E: ParseError<&'a [u8]> + ContextError<&'a [u8]>,
+    {
+        let (rest, te) = TransferEncodingInner::parse(input, headers)?;
+
+        let body = match te {
+            TransferEncodingInner::Regular(content) => Self {
+                kind: TransferEncodingKind::Regular,
+                content: content.to_vec(),
+            },
+            TransferEncodingInner::Chunked(chunks) => {
+                let mut content = Vec::with_capacity(chunks.iter().map(|c| c.len()).sum());
+                for chunk in chunks {
+                    content
+                        .write_all(chunk)
+                        .expect("Writing into a Vec should not fail");
+                }
+                Self {
+                    kind: TransferEncodingKind::Chunked,
+                    content,
+                }
+            }
+            TransferEncodingInner::Gzip(gzip) => {
+                let mut content = Vec::with_capacity(gzip.len());
+                let mut decoder = GzDecoder::new(gzip);
+                match decoder.read_to_end(&mut content) {
+                    Ok(_) => Self {
+                        kind: TransferEncodingKind::Gzip,
+                        content,
+                    },
+                    Err(_) => {
+                        return Err(nom::Err::Failure(E::add_context(
+                            input,
+                            "Invalid gzip content",
+                            E::from_error_kind(input, nom::error::ErrorKind::Verify),
+                        )));
+                    }
+                }
+            }
+            TransferEncodingInner::Deflate(zlib) => {
+                let mut content = Vec::with_capacity(zlib.len());
+                let mut decoder = ZlibDecoder::new(zlib);
+                match decoder.read_to_end(&mut content) {
+                    Err(_) => {
+                        return Err(nom::Err::Failure(E::add_context(
+                            input,
+                            "Invalid zlib content",
+                            E::from_error_kind(input, nom::error::ErrorKind::Verify),
+                        )));
+                    }
+                    Ok(_) => Self {
+                        kind: TransferEncodingKind::Deflate,
+                        content,
+                    },
+                }
+            }
+            TransferEncodingInner::Compress(_) => {
+                return Err(nom::Err::Failure(E::add_context(
+                    input,
+                    "LZW/Compress is not handled",
+                    E::from_error_kind(input, nom::error::ErrorKind::NoneOf),
+                )));
+            }
         };
 
-        loop {
-            let size = chunk_self.len().min(chunk_other.len());
-            if &chunk_self[..size] != &chunk_other[..size] {
-                return None;
-            }
-            chunk_self = &chunk_self[size..];
-            chunk_other = &chunk_other[size..];
-            match (chunk_self.len(), chunk_other.len()) {
-                (0, 0) => match (chunks_self.next(), chunks_other.next()) {
-                    (Some(x), Some(y)) => {
-                        (chunk_self, chunk_other) = (x, y);
-                    }
-                    (None, None) => return Some(()),
-                    _ => return None,
-                },
-                (0, _) => {
-                    chunk_self = chunks_self.next()?;
-                }
-                (_, 0) => {
-                    chunk_other = chunks_other.next()?;
-                }
-                (_, _) => {
-                    unreachable!()
-                }
-            }
-        }
-    }
-}
-
-impl fmt::Debug for TransferEncoding<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Regular(c) => f.debug_tuple("Regular").field(&Hex::from(*c)).finish(),
-            Self::Chunked(c) => f.debug_tuple("Chunked").field(&Hex::from(c[0])).finish(),
-            Self::Compress(c) => f.debug_tuple("Compress").field(&Hex::from(*c)).finish(),
-            Self::Deflate(c) => f.debug_tuple("Deflate").field(&Hex::from(*c)).finish(),
-            Self::Gzip(c) => f.debug_tuple("Gzip").field(&Hex::from(*c)).finish(),
-        }
-    }
-}
-
-impl std::cmp::PartialEq for TransferEncoding<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        if self.is_equal(other).is_some() {
-            eprintln!("{:?} == {:?}", self, other);
-            true
-        } else {
-            eprintln!("{:?} != {:?}", self, other);
-            false
-        }
+        Ok((rest, body))
     }
 }

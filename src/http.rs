@@ -6,7 +6,7 @@ use nom::error::{context, ContextError, ParseError};
 use nom::sequence::{separated_pair, terminated, tuple};
 
 mod transfer;
-pub use transfer::TransferEncoding;
+pub use transfer::{Body, TransferEncodingKind};
 
 mod response;
 pub use response::Response;
@@ -68,7 +68,7 @@ impl<'a> Header<'a> {
     {
         headers
             .iter()
-            .filter_map(|h| h.name.eq_ignore_ascii_case(needle).then(|| h.value))
+            .filter_map(|h| h.name.eq_ignore_ascii_case(needle).then_some(h.value))
     }
 }
 
