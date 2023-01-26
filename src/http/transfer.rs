@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::{Read, Write};
 
 use nom::bytes::streaming::{tag, take};
@@ -130,16 +131,34 @@ pub enum TransferEncodingKind {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct Body {
+pub struct Body<'a> {
     /// The kind being used
     pub kind: TransferEncodingKind,
 
     /// The decoded content
-    pub content: Vec<u8>,
+    pub content: Cow<'a, [u8]>,
 }
 
-impl Body {
-    pub fn parse<'a, E>(input: &'a [u8], headers: &[Header<'_>]) -> nom::IResult<&'a [u8], Self, E>
+impl<'a> From<&'a [u8]> for Body<'a> {
+    fn from(value: &'a [u8]) -> Self {
+        Self {
+            kind: TransferEncodingKind::Regular,
+            content: Cow::Borrowed(value),
+        }
+    }
+}
+
+impl<'a> From<Vec<u8>> for Body<'a> {
+    fn from(value: Vec<u8>) -> Self {
+        Self {
+            kind: TransferEncodingKind::Regular,
+            content: Cow::Owned(value),
+        }
+    }
+}
+
+impl<'a> Body<'a> {
+    pub fn parse<E>(input: &'a [u8], headers: &[Header<'_>]) -> nom::IResult<&'a [u8], Self, E>
     where
         E: ParseError<&'a [u8]> + ContextError<&'a [u8]>,
     {
@@ -148,7 +167,7 @@ impl Body {
         let body = match te {
             TransferEncodingInner::Regular(content) => Self {
                 kind: TransferEncodingKind::Regular,
-                content: content.to_vec(),
+                content: Cow::Borrowed(content),
             },
             TransferEncodingInner::Chunked(chunks) => {
                 let mut content = Vec::with_capacity(chunks.iter().map(|c| c.len()).sum());
@@ -159,7 +178,7 @@ impl Body {
                 }
                 Self {
                     kind: TransferEncodingKind::Chunked,
-                    content,
+                    content: Cow::Owned(content),
                 }
             }
             TransferEncodingInner::Gzip(gzip) => {
@@ -168,7 +187,7 @@ impl Body {
                 match decoder.read_to_end(&mut content) {
                     Ok(_) => Self {
                         kind: TransferEncodingKind::Gzip,
-                        content,
+                        content: Cow::Owned(content),
                     },
                     Err(_) => {
                         return Err(nom::Err::Failure(E::add_context(
@@ -192,7 +211,7 @@ impl Body {
                     }
                     Ok(_) => Self {
                         kind: TransferEncodingKind::Deflate,
-                        content,
+                        content: Cow::Owned(content),
                     },
                 }
             }

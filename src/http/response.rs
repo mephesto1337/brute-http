@@ -25,7 +25,7 @@ pub struct Response<'a> {
     headers: Vec<Header<'a>>,
 
     /// body
-    pub body: Body,
+    pub body: Body<'a>,
 }
 
 impl<'a> Response<'a> {
@@ -88,7 +88,6 @@ impl fmt::Display for Response<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::http::TransferEncodingKind;
     use crate::utils::hex::Hex;
     use crate::Error;
 
@@ -135,10 +134,7 @@ mod tests {
                             value: "Closed"
                         }
                     ],
-                    body: Body {
-                        kind: TransferEncodingKind::Regular,
-                        content: b"hello world!"[..].to_vec()
-                    }
+                    body: b"hello world!"[..].into()
                 }
             )),
             "Bad response: {:#?}",

@@ -30,7 +30,7 @@ pub struct Request<'a> {
     headers: Vec<Header<'a>>,
 
     /// Body
-    pub body: Body,
+    pub body: Body<'a>,
 }
 
 impl<'a> Request<'a> {
@@ -146,7 +146,6 @@ impl fmt::Display for Request<'_> {
 mod tests {
     use pretty_assertions::assert_eq;
 
-    use crate::http::TransferEncodingKind;
     use crate::utils::hex::Hex;
     use crate::Error;
 
@@ -184,10 +183,7 @@ mod tests {
                             value: "Closed"
                         },
                     ],
-                    body: Body {
-                        kind: TransferEncodingKind::Regular,
-                        content: Vec::new(),
-                    }
+                    body: b""[..].into()
                 }
             ))
         );
