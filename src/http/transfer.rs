@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fmt;
 use std::io::{Read, Write};
 
 use nom::bytes::streaming::{tag, take};
@@ -130,7 +131,7 @@ pub enum TransferEncodingKind {
     Gzip,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Eq, PartialEq)]
 pub struct Body<'a> {
     /// The kind being used
     pub kind: TransferEncodingKind,
@@ -154,6 +155,15 @@ impl<'a> From<Vec<u8>> for Body<'a> {
             kind: TransferEncodingKind::Regular,
             content: Cow::Owned(value),
         }
+    }
+}
+
+impl<'a> fmt::Debug for Body<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Body")
+            .field("kind", &self.kind)
+            .field("length", &self.content.len())
+            .finish()
     }
 }
 
