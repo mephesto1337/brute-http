@@ -25,9 +25,9 @@ struct Options {
     /// Remote destination HOST:PORT
     target: String,
 
-    /// Number of threads to use
+    /// Number of tasks to use (default 10/core)
     #[arg(short, long)]
-    threads: Option<usize>,
+    tasks: Option<usize>,
 
     /// Only test request and dumps response
     #[arg(long)]
@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
     let args = Options::parse();
     let request = tokio::fs::read(&args.request).await?.leak();
     let request = &*request;
-    let threads_count = args.threads.unwrap_or(get_cpu_count().await?);
+    let tasks_count = args.tasks.unwrap_or(get_cpu_count().await? * 10);
 
     if args.test {
         let mut stream = Connection::new(&args.target, args.use_tls).await?;
@@ -93,10 +93,10 @@ async fn main() -> Result<()> {
     }
 
     let target = &*Box::leak(args.target.into_boxed_str());
-    let mut tasks: Vec<_> = (0..threads_count)
-        .map(|i| {
+    let mut tasks: Vec<_> = (0..tasks_count)
+        .map(|_i| {
             tokio::spawn(async move {
-                eprintln!("Starting task {}", i);
+                // eprintln!("Starting task {}", i);
                 brute_server(target, request, args.use_tls).await;
             })
         })

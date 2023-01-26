@@ -21,6 +21,7 @@ impl Connection {
         if use_tls {
             let tls_stream = async_native_tls::TlsConnector::new()
                 .danger_accept_invalid_hostnames(true)
+                .danger_accept_invalid_certs(true)
                 .connect(remote, stream)
                 .await?;
             Ok(Self::Tls(tls_stream))
