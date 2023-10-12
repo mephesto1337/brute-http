@@ -1,10 +1,6 @@
-use std::fmt;
-use std::ops::Deref;
+use std::{borrow::Cow, fmt, ops::Deref};
 
-pub enum Hex<'a> {
-    Ref(&'a [u8]),
-    Owned(Vec<u8>),
-}
+pub struct Hex<'a>(Cow<'a, [u8]>);
 
 impl<'a> Hex<'a> {
     pub fn as_slice(&'a self) -> &'a [u8] {
@@ -13,14 +9,20 @@ impl<'a> Hex<'a> {
 }
 
 impl<'a> From<&'a [u8]> for Hex<'a> {
-    fn from(h: &'a [u8]) -> Self {
-        Self::Ref(h)
+    fn from(v: &'a [u8]) -> Self {
+        Self(v.into())
     }
 }
 
 impl From<Vec<u8>> for Hex<'_> {
     fn from(v: Vec<u8>) -> Self {
-        Self::Owned(v)
+        Self(v.into())
+    }
+}
+
+impl<'a> From<Cow<'a, [u8]>> for Hex<'a> {
+    fn from(v: Cow<'a, [u8]>) -> Self {
+        Self(v)
     }
 }
 
@@ -28,42 +30,36 @@ impl Deref for Hex<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Ref(h) => h,
-            Self::Owned(o) => &o[..],
-        }
+        self.0.deref()
     }
 }
 
 impl AsRef<[u8]> for Hex<'_> {
     fn as_ref(&self) -> &[u8] {
-        match self {
-            Self::Ref(r) => r,
-            Self::Owned(o) => &o[..],
-        }
+        self.0.as_ref()
     }
 }
 
 impl fmt::Debug for Hex<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut buffer = self.as_ref();
-        f.write_str("\"")?;
-        loop {
-            match std::str::from_utf8(buffer) {
-                Ok(s) => {
-                    write!(f, "{}", s.escape_debug())?;
-                    break;
-                }
-                Err(e) => {
-                    let valid = &buffer[..e.valid_up_to()];
-                    f.write_str(unsafe { std::str::from_utf8_unchecked(valid) })?;
-                    write!(f, "\\x{:02x}", buffer[0])?;
-                    buffer = &buffer[1..];
+        let buffer = self.as_ref();
+        for b in buffer {
+            match *b {
+                b'\n' => f.write_str("\\n\n")?,
+                b'\r' => f.write_str("\\r")?,
+                b'\t' => f.write_str("\\t")?,
+                _ => {
+                    if b.is_ascii_control() {
+                        write!(f, "\\x{b:02x}")?
+                    } else {
+                        let s = &[*b][..];
+                        let s = unsafe { std::str::from_utf8_unchecked(s) };
+                        f.write_str(s)?
+                    }
                 }
             }
         }
 
-        f.write_str("\"")?;
         Ok(())
     }
 }

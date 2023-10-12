@@ -17,13 +17,19 @@ pub use request::Request;
 use crate::utils::{ascii_string, consume_spaces, crlf};
 
 /// HTTP header
-#[derive(Debug, Eq)]
+#[derive(Eq)]
 pub struct Header<'a> {
     /// HTTP header name
     pub name: &'a str,
 
     /// HTTP header value (without \r\n)
     pub value: &'a str,
+}
+
+impl fmt::Debug for Header<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{}: {}\\r\\n", self.name, self.value)
+    }
 }
 
 impl fmt::Display for Header<'_> {

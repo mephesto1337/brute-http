@@ -7,10 +7,11 @@ use nom::multi::many1;
 use nom::sequence::{preceded, terminated, tuple};
 
 use crate::http::{Body, Header};
+use crate::utils::hex::Hex;
 use crate::utils::{ascii_string, consume_spaces, crlf, parse_u16, parse_version};
 
 /// HTTP Response
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Eq, PartialEq)]
 pub struct Response<'a> {
     /// Version used by the server
     pub version: (u8, u8),
@@ -71,6 +72,24 @@ impl<'a> Response<'a> {
     }
 }
 
+impl fmt::Debug for Response<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "HTTP/{}.{} {} {}\\r\\n",
+            self.version.0, self.version.1, self.code, self.message
+        )?;
+        for header in self.headers() {
+            fmt::Debug::fmt(header, f)?;
+        }
+
+        f.write_str("\\r\\n\n")?;
+
+        let body: Hex = self.body.content.as_ref().into();
+        fmt::Debug::fmt(&body, f)
+    }
+}
+
 impl fmt::Display for Response<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -82,7 +101,10 @@ impl fmt::Display for Response<'_> {
             write!(f, "{}", header)?;
         }
 
-        f.write_str("\r\n")
+        f.write_str("\r\n")?;
+
+        let body: Hex = self.body.content.as_ref().into();
+        fmt::Debug::fmt(&body, f)
     }
 }
 

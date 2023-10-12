@@ -1,7 +1,7 @@
 use nom::bytes::streaming::{tag, take_while1};
-use nom::combinator::{map, map_opt, verify};
+use nom::combinator::{map, map_opt, opt, verify};
 use nom::error::{context, ContextError, ParseError};
-use nom::sequence::tuple;
+use nom::sequence::{preceded, tuple};
 
 pub mod hex;
 
@@ -69,8 +69,15 @@ pub fn parse_version<'a, E>(input: &'a [u8]) -> nom::IResult<&'a [u8], (u8, u8),
 where
     E: ParseError<&'a [u8]> + ContextError<&'a [u8]>,
 {
-    let (rest, (major, _dot, minor)) =
-        context("HTTP version", tuple((parse_u8, tag(&b"."[..]), parse_u8)))(input)?;
+    let (rest, (major, minor)) = context(
+        "HTTP version",
+        tuple((
+            parse_u8,
+            map(opt(preceded(tag(&b"."[..]), parse_u8)), |minor| {
+                minor.unwrap_or(0)
+            }),
+        )),
+    )(input)?;
 
     Ok((rest, (major, minor)))
 }

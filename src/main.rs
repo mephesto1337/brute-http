@@ -74,9 +74,26 @@ static RESPONSE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     let args = Options::parse();
     let request = tokio::fs::read(&args.request).await?.leak();
     let request = &*request;
+    match http::Request::parse::<()>(request) {
+        Ok((rest, req)) => {
+            if !rest.is_empty() {
+                let s: utils::hex::Hex = rest.into();
+                log::warn!("There is remaining bytes in the request that may not be handled by the server: {s:?}");
+            }
+            match req.version {
+                (0, 9) | (1, 0) | (1, 1) => {}
+                (a, b) => log::error!("Unsupported HTTP version: {a}.{b}"),
+            }
+        }
+        Err(e) => {
+            log::error!("Could not parse request: {e:?}");
+        }
+    }
     let tasks_count = args.tasks.unwrap_or(get_cpu_count().await? * 10);
 
     if args.test {
@@ -85,18 +102,18 @@ async fn main() -> Result<()> {
         send_request(&mut stream, request, &mut buffer).await?;
         let (rest, response) =
             http::Response::parse::<nom::error::VerboseError<_>>(&buffer[..]).unwrap();
-        println!("{}", response);
+        println!("{:?}", response);
         if !rest.is_empty() {
-            eprintln!("Got extra bytes: {:#?}", rest);
+            log::warn!("Got extra bytes: {:#?}", rest);
         }
         return Ok(());
     }
 
     let target = &*Box::leak(args.target.into_boxed_str());
     let mut tasks: Vec<_> = (0..tasks_count)
-        .map(|_i| {
+        .map(|i| {
             tokio::spawn(async move {
-                // eprintln!("Starting task {}", i);
+                log::debug!("Starting task {}", i);
                 brute_server(target, request, args.use_tls).await;
             })
         })
@@ -121,7 +138,7 @@ async fn main() -> Result<()> {
 
     for (i, t) in tasks.iter_mut().enumerate() {
         if let Err(e) = t.await {
-            eprintln!("Issue with task {}: {}", i, e);
+            log::error!("Issue with task {}: {}", i, e);
         }
     }
 
@@ -163,7 +180,7 @@ where
             }
             Err(e) => {
                 if !e.is_incomplete() {
-                    eprintln!("Could not parse response");
+                    log::error!("Could not parse response");
                     return Err(e.into());
                 }
             }
@@ -186,13 +203,13 @@ async fn brute_server(remote: &str, request: &[u8], use_tls: bool) {
         let mut stream = match Connection::new(remote, use_tls).await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Cannot connect to {}: {:?}", remote, e);
+                log::error!("Cannot connect to {}: {:?}", remote, e);
                 return;
             }
         };
 
         if let Err(e) = send_requests(&mut stream, request).await {
-            eprintln!("Error while sending request to {}: {:?}", remote, e);
+            log::error!("Error while sending request to {}: {:?}", remote, e);
         }
     }
 }
