@@ -94,10 +94,14 @@ async fn main() -> Result<()> {
             log::error!("Could not parse request: {e:?}");
         }
     }
-    let tasks_count = args.tasks.unwrap_or(get_cpu_count().await? * 10);
 
     if args.test {
+        log::trace!("Connecting to {}", &args.target);
         let mut stream = Connection::new(&args.target, args.use_tls).await?;
+        match stream.peer_addr() {
+            Ok(a) => log::debug!("Connected to {a} !"),
+            Err(_) => log::debug!("Connected to {a} !", a = &args.target),
+        }
         let mut buffer = Vec::with_capacity(8192);
         send_request(&mut stream, request, &mut buffer).await?;
         let (rest, response) =
@@ -109,6 +113,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    let tasks_count = args.tasks.unwrap_or(get_cpu_count().await? * 10);
     let target = &*Box::leak(args.target.into_boxed_str());
     let mut tasks: Vec<_> = (0..tasks_count)
         .map(|i| {
@@ -153,13 +158,16 @@ async fn send_request<S>(
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin + Send + Sync,
 {
+    log::trace!("Sending request...");
     stream.write_all(request).await?;
+    log::trace!("request is fully send");
     let now = Instant::now();
     BYTES_SEND.fetch_add(request.len() as u64, Ordering::Relaxed);
     response_buffer.clear();
 
     loop {
         let n = stream.read_buf(response_buffer).await?;
+        log::trace!("Read {n} bytes from stream");
         if n == 0 {
             // Reached EOF
             return Err(std::io::Error::new(
@@ -182,6 +190,8 @@ where
                 if !e.is_incomplete() {
                     log::error!("Could not parse response");
                     return Err(e.into());
+                } else {
+                    log::trace!("Response is incomplete, fetching more bytes");
                 }
             }
         }

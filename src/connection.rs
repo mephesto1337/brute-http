@@ -1,6 +1,7 @@
 use crate::Result;
 
 use std::io;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -27,6 +28,13 @@ impl Connection {
             Ok(Self::Tls(tls_stream))
         } else {
             Ok(Self::Plain(stream))
+        }
+    }
+
+    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
+        match self {
+            Connection::Plain(ref t) => t.peer_addr(),
+            Connection::Tls(ref t) => t.get_ref().peer_addr(),
         }
     }
 }
