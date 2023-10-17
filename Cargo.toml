@@ -8,13 +8,13 @@ edition = "2021"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-async-native-tls = { version = "0.4", default-features = false, features = [
+async-native-tls = { version = "0.5", default-features = false, features = [
     "runtime-tokio",
 ] }
 nom = "7"
 flate2 = "1"
 log = "0.4"
-env_logger = "0.9"
+env_logger = "0.10"
 
 [dev-dependencies]
 pretty_assertions = "1"
